@@ -4,7 +4,7 @@
 
 > Proyecto: `ClashRPC`  
 > Autor: **Kira Kohler**  
-> Licencia: **Apache-2.0** (ver [`LICENSE`](LICENSE.txt) y [`NOTICE`](NOTICE.txt))
+> Licencia: **Apache-2.0** (ver [`LICENSE`](LICENSE) y [`NOTICE`](NOTICE))
 
 ---
 
