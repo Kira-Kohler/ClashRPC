@@ -1,6 +1,6 @@
 [package]
 name = "ClashRPC"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2021"
 license = "Apache-2.0"
 description = "Discord Rich Presence para Clash Royale: estado en vivo, actividad y detalles de tu partida en tu estado, con solo un par de clicks."
