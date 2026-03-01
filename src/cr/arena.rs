@@ -84,14 +84,16 @@ pub fn arena_id_field_to_number(arena_id: u64) -> Option<u32> {
     None
 }
 
-// 1) rawName -> 'Arena_Lxx'
-// 2) name -> por si 'rawName' viene roto
-// 3) id -> 54000000 + xx (que es lo que antes usaba ClashRPC para detectar la arena, pero a veces no se actualiza bien, por eso las otras opciones)
-
 pub fn arena_id_to_number(arena: &Arena) -> Option<u32> {
-    arena_raw_name_to_number(arena.raw_name.as_deref())
-        .or_else(|| arena_name_to_number(&arena.name))
-        .or_else(|| arena_id_field_to_number(arena.id))
+    let from_name = arena_name_to_number(&arena.name);
+    let from_raw = arena_raw_name_to_number(arena.raw_name.as_deref());
+
+    match (from_name, from_raw) {
+        (Some(n), Some(r)) if n != r => Some(n),
+        (Some(n), _) => Some(n),
+        (None, Some(r)) => Some(r),
+        (None, None) => arena_id_field_to_number(arena.id),
+    }
 }
 
 pub fn arena_number_to_es(n: u32) -> Option<&'static str> {
