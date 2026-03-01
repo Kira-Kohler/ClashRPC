@@ -57,7 +57,10 @@ pub fn run() {
     if existed {
         log_info(format!("📁 Config cargada desde: {}", cfg_path.display()));
     } else {
-        log_info(format!("📁 Se ha creado el config.json en: {}", cfg_path.display()));
+        log_info(format!(
+            "📁 Se ha creado el config.json en: {}",
+            cfg_path.display()
+        ));
     }
 
     let discord_client_id = get_required_env("DISCORD_CLIENT_ID");
@@ -83,6 +86,9 @@ pub fn run() {
     let player_poll_ms = parse_u64_env("PLAYER_POLL_MS", 30_000);
     let battle_poll_ms = parse_u64_env("BATTLELOG_POLL_MS", 30_000);
     let tick_ms = parse_u64_env("RPC_TICK_MS", 5_000);
+
+    let player_refresh_retries = parse_u64_env("PLAYER_REFRESH_RETRIES", 3);
+    let player_refresh_retry_delay_ms = parse_u64_env("PLAYER_REFRESH_RETRY_DELAY_MS", 1_200);
 
     let user_agent = format!("{APP_NAME}/{current_version}");
     let http = build_http_client(&user_agent, &api_key);
@@ -123,14 +129,14 @@ pub fn run() {
             || last_player_fetch.elapsed() >= Duration::from_millis(player_poll_ms);
 
         if need_player {
-            last_player_fetch = Instant::now();
             match fetch_player(&http, &player_tag) {
                 Ok(p) => {
                     cached_player = Some(p);
+                    last_player_fetch = Instant::now();
                     player_fetch_ok_this_tick = true;
                 }
                 Err(e) => {
-                    log_warn(format!("No pude leer el player ({e})."));
+                    log_warn(format!("No pude leer el perfil del jugador ({e})."));
                 }
             }
         }
@@ -161,19 +167,44 @@ pub fn run() {
         }
 
         if force_player_refresh && !player_fetch_ok_this_tick {
-            match fetch_player(&http, &player_tag) {
-                Ok(p) => {
-                    cached_player = Some(p);
-                    last_player_fetch = Instant::now();
-                    if debug_arena {
-                        log_info("[PLAYER_DEBUG] battle cambió -> refrescando copas".to_string());
+            let prev_trophies = cached_player.as_ref().map(|p| p.trophies);
+
+            let mut attempt: u64 = 0;
+            loop {
+                attempt += 1;
+
+                match fetch_player(&http, &player_tag) {
+                    Ok(p) => {
+                        let new_trophies = p.trophies;
+                        cached_player = Some(p);
+                        last_player_fetch = Instant::now();
+
+                        if debug_arena {
+                            log_info(format!(
+                        "[PLAYER_DEBUG] battle cambió -> refresco el perfil, intento {}/{} ({} -> {})",
+                        attempt,
+                        player_refresh_retries,
+                        prev_trophies.map(|x| x.to_string()).unwrap_or_else(|| "—".to_string()),
+                        new_trophies
+                    ));
+                        }
+
+                        if prev_trophies.map(|t| t != new_trophies).unwrap_or(true) {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        log_warn(format!(
+                            "No pude refrescar el perfil tras la actualización ({e})."
+                        ));
                     }
                 }
-                Err(e) => {
-                    log_warn(format!(
-                        "No pude refrescar el perfil tras la actualización ({e})."
-                    ));
+
+                if attempt >= player_refresh_retries {
+                    break;
                 }
+
+                thread::sleep(Duration::from_millis(player_refresh_retry_delay_ms));
             }
         }
 

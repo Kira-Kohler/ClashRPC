@@ -5,7 +5,7 @@ pub const GAME: &str = "Clash Royale";
 pub const CR_API_BASE: &str = "https://api.clashroyale.com";
 
 pub const CREATOR_NAME: &str = "Kira Kohler";
-pub const CREATOR_URL: &str = "https://kirakohler.es";
+pub const CREATOR_URL: &str = "https://github.com/Kira-Kohler/ClashRPC/";
 
 pub const WINDOW_TITLE: &str = "ClashRPC by Kira Kohler";
 
