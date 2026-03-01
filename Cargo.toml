@@ -1,0 +1,29 @@
+[package]
+name = "ClashRPC"
+version = "1.1.1"
+edition = "2021"
+license = "Apache-2.0"
+description = "Discord Rich Presence para Clash Royale: estado en vivo, actividad y detalles de tu partida en tu estado, con solo un par de clicks."
+repository = "https://github.com/Kira-Kohler/ClashRPC"
+
+[lib]
+name = "clashrpc"
+path = "src/lib.rs"
+
+
+[dependencies]
+dotenvy = "0.15"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+discord-rich-presence = "1.1"
+chrono = "0.4"
+
+console = "0.16.2"
+figlet-rs = "0.1.5"
+inquire = "0.9.4"
+indicatif = "0.18.4"
+winres = "0.1"
+
+[build-dependencies]
+winres = "0.1"
