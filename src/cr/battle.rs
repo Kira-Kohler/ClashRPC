@@ -68,8 +68,12 @@ pub fn translate_mode(mode: &str) -> &str {
         return "Ranked";
     }
 
+    if m.contains("teamvsteam") || m.contains("team vs team") {
+        return "2vs2";
+    }
+
     if m.contains("2v2") {
-        return "2c2";
+        return "2vs2";
     }
 
     if m.contains("tournament") {
