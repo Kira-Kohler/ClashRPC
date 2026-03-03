@@ -48,6 +48,8 @@ pub fn run() {
     let current_version = env!("CARGO_PKG_VERSION");
     let rust_env = env::var("rust_env").unwrap_or_else(|_| rust_env_pre.clone());
     banner(current_version, &rust_env);
+    crate::core::update::try_apply_pending_update(current_version);
+    crate::core::update::check_startup_update(current_version);
 
     let cfg_path = config_path();
     let existed = cfg_path.exists();
@@ -94,7 +96,7 @@ pub fn run() {
     let http = build_http_client(&user_agent, &api_key);
     let probe_http = build_probe_client();
     let mut last_probe_url = String::new();
-    let mut last_probe_at = Instant::now() - Duration::from_secs(3600);
+    let mut last_probe_at: Option<Instant> = None;
 
     let player_tag = prompt_player_tag(&http, &mut cfg);
 
@@ -111,29 +113,56 @@ pub fn run() {
         tick_ms, player_poll_ms, battle_poll_ms
     ));
 
+    crate::core::update::start_auto_update_thread(current_version.to_string());
+
     let mut rpc = connect_rpc_with_retry(&discord_client_id);
     let mut cleared_once = false;
 
     let mut cached_player: Option<Player> = None;
-    let mut last_player_fetch = Instant::now() - Duration::from_secs(3600);
+    let mut last_player_fetch: Option<Instant> = None;
 
     let mut cached_battle: Option<Option<BattleLogEntry>> = None;
-    let mut last_battle_fetch = Instant::now() - Duration::from_secs(3600);
+    let mut last_battle_fetch: Option<Instant> = None;
 
     loop {
         let mut force_player_refresh = false;
         let mut player_fetch_ok_this_tick = false;
+        let prev_trophies_for_poll = cached_player.as_ref().map(|p| p.trophies);
+        let prev_arena_num_for_poll = cached_player
+            .as_ref()
+            .and_then(|p| p.arena.as_ref())
+            .and_then(|a| arena_id_to_number(a));
 
         // ---------- PLAYER ----------
         let need_player = cached_player.is_none()
-            || last_player_fetch.elapsed() >= Duration::from_millis(player_poll_ms);
+            || last_player_fetch.map_or(true, |t| {
+                t.elapsed() >= Duration::from_millis(player_poll_ms)
+            });
 
         if need_player {
             match fetch_player(&http, &player_tag) {
                 Ok(p) => {
+                    let new_arena_num = p.arena.as_ref().and_then(|a| arena_id_to_number(a));
+
+                    let trophies_changed = prev_trophies_for_poll
+                        .map(|t| t != p.trophies)
+                        .unwrap_or(false);
+
+                    let should_recheck_arena = trophies_changed
+                        && prev_arena_num_for_poll.is_some()
+                        && prev_arena_num_for_poll == new_arena_num;
+
                     cached_player = Some(p);
-                    last_player_fetch = Instant::now();
+                    last_player_fetch = Some(Instant::now());
                     player_fetch_ok_this_tick = true;
+
+                    if should_recheck_arena {
+                        thread::sleep(Duration::from_millis(player_refresh_retry_delay_ms));
+                        if let Ok(p2) = fetch_player(&http, &player_tag) {
+                            cached_player = Some(p2);
+                            last_player_fetch = Some(Instant::now());
+                        }
+                    }
                 }
                 Err(e) => {
                     log_warn(format!("No pude leer el perfil del jugador ({e})."));
@@ -143,10 +172,12 @@ pub fn run() {
 
         // ---------- BATTLE ----------
         let need_battle = cached_battle.is_none()
-            || last_battle_fetch.elapsed() >= Duration::from_millis(battle_poll_ms);
+            || last_battle_fetch.map_or(true, |t| {
+                t.elapsed() >= Duration::from_millis(battle_poll_ms)
+            });
 
         if need_battle {
-            last_battle_fetch = Instant::now();
+            last_battle_fetch = Some(Instant::now());
             let old_key = cached_battle
                 .as_ref()
                 .and_then(|opt| opt.as_ref().map(|e| e.battle_time.clone()));
@@ -168,6 +199,12 @@ pub fn run() {
 
         if force_player_refresh && !player_fetch_ok_this_tick {
             let prev_trophies = cached_player.as_ref().map(|p| p.trophies);
+            let prev_arena_num = cached_player
+                .as_ref()
+                .and_then(|p| p.arena.as_ref())
+                .and_then(|a| arena_id_to_number(a));
+
+            let mut did_arena_recheck_after_trophies = false;
 
             let mut attempt: u64 = 0;
             loop {
@@ -176,21 +213,24 @@ pub fn run() {
                 match fetch_player(&http, &player_tag) {
                     Ok(p) => {
                         let new_trophies = p.trophies;
+
+                        let new_arena_num = p.arena.as_ref().and_then(|a| arena_id_to_number(a));
+
                         cached_player = Some(p);
-                        last_player_fetch = Instant::now();
+                        last_player_fetch = Some(Instant::now());
 
-                        if debug_arena {
-                            log_info(format!(
-                        "[PLAYER_DEBUG] battle cambió -> refresco el perfil, intento {}/{} ({} -> {})",
-                        attempt,
-                        player_refresh_retries,
-                        prev_trophies.map(|x| x.to_string()).unwrap_or_else(|| "—".to_string()),
-                        new_trophies
-                    ));
-                        }
+                        let trophies_changed =
+                            prev_trophies.map(|t| t != new_trophies).unwrap_or(true);
 
-                        if prev_trophies.map(|t| t != new_trophies).unwrap_or(true) {
-                            break;
+                        if trophies_changed {
+                            if !did_arena_recheck_after_trophies
+                                && prev_arena_num.is_some()
+                                && prev_arena_num == new_arena_num
+                            {
+                                did_arena_recheck_after_trophies = true;
+                            } else {
+                                break;
+                            }
                         }
                     }
                     Err(e) => {
@@ -270,11 +310,11 @@ pub fn run() {
         if debug_arena_fetch {
             if let Some((_, _, _, _, _, _, _, Some(url))) = arena_dbg.as_ref() {
                 let should_probe = last_probe_url != url.as_str()
-                    || last_probe_at.elapsed() > Duration::from_secs(300);
+                    || last_probe_at.map_or(true, |t| t.elapsed() > Duration::from_secs(300));
 
                 if should_probe {
                     last_probe_url = url.clone();
-                    last_probe_at = Instant::now();
+                    last_probe_at = Some(Instant::now());
 
                     let (status, ct, cl, err) = probe_image_url(&probe_http, url);
                     log_info(format!(
