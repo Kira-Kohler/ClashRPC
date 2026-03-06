@@ -100,6 +100,10 @@ pub fn translate_mode(mode: &str) -> &str {
         return "Desafío";
     }
 
+    if m.contains("crazy_arena") {
+        return "C.A.O.S";
+    }
+
     mode
 }
 
